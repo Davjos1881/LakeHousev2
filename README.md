@@ -85,3 +85,25 @@ Connection Properties: fs.s3a.path.style.access = true, fs.s3a.endpoint = minio:
 Si la fuente se guarda sin error y aparece nessie en el árbol de fuentes, la conexión funciona. De nuevo, la lectura de datos se comprobará con las tablas reales.
 
 Trino usa la API v1 de Nessie y Dremio la v2. Es correcto, no las iguale.
+
+Para Apagar el contenedor:
+
+    docker compose --profile pipe --profile sql down
+    
+    docker compose down
+
+Con el contenedor apagado, podemos verificar que los volúmenes siguen ahí:
+
+    docker volume ls --filter name=lakehousev2
+
+Deberia aparecer:
+
+DRIVER    VOLUME NAME
+
+local     lakehousev2_dremio-data
+
+local     lakehousev2_minio-data
+
+local     lakehousev2_postgres-data
+
+local     lakehousev2_spark-jars
