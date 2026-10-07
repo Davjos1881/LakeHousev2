@@ -1,0 +1,2 @@
+# Fuente unica de versiones de DLT (venv de Airflow + Jupyter)
+dlt[filesystem,parquet]==1.5.0

@@ -1,0 +1,2 @@
+# PySpark: se instala UNA sola vez (sin constraints; Airflow queda fijado en el Dockerfile)
+pyspark==3.5.5

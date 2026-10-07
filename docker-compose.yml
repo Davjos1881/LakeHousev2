@@ -1,0 +1,317 @@
+# Perfiles:
+#   (sin perfil) core -> postgres, minio, minio-init, nessie
+#   pipe              -> spark-jars, spark-master, spark-worker, airflow-*, jupyter
+#   sql               -> trino, dremio
+# Uso:
+#   docker compose up -d                          # core
+#   docker compose --profile pipe up -d           # + Airflow y Jupyter
+#   docker compose --profile sql up -d            # + Trino y Dremio (apaga pipe antes)
+
+x-aws-env: &aws-env
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+  AWS_REGION: ${AWS_REGION}
+  AWS_DEFAULT_REGION: ${AWS_REGION}
+
+x-lakehouse-image: &lakehouse-image
+  build:
+    context: .
+    dockerfile: docker/lakehouse/Dockerfile
+  image: lakehouse:1.0
+
+x-spark-official: &spark-official
+  image: apache/spark:3.5.5-scala2.12-java17-python3-ubuntu
+  user: root
+  networks:
+    - network_fhbd_2026
+  profiles: ["pipe"]
+
+x-airflow-common: &airflow-common
+  <<: *lakehouse-image
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment: &airflow-env
+    <<: *aws-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__WEBSERVER__WORKERS: '2'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./config:/opt/airflow/config
+    - ./plugins:/opt/airflow/plugins
+    - ./jobs:/opt/airflow/jobs
+  networks:
+    - network_fhbd_2026
+  profiles: ["pipe"]
+
+services:
+
+  # ---------- CORE ----------
+  postgres:
+    image: postgres:15
+    container_name: postgres_fhbd_2026
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init-nessie.sql:/docker-entrypoint-initdb.d/init-nessie.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    mem_limit: 512m
+    restart: unless-stopped
+    networks:
+      - network_fhbd_2026
+
+  minio:
+    image: pgsty/minio:RELEASE.2026-06-18T00-00-00Z
+    container_name: minio_fhbd_2026
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_REGION_NAME: ${AWS_REGION}
+    volumes:
+      - minio-data:/data
+    mem_limit: 512m
+    restart: unless-stopped
+    networks:
+      - network_fhbd_2026
+
+  minio-init:
+    image: amazon/aws-cli:2.17.0
+    container_name: minio_init_fhbd_2026
+    entrypoint: ["/bin/sh", "/init.sh"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: ${AWS_REGION}
+    volumes:
+      - ./docker/minio-init/init.sh:/init.sh:ro
+    depends_on:
+      - minio
+    restart: "no"
+    networks:
+      - network_fhbd_2026
+
+  nessie:
+    image: ghcr.io/projectnessie/nessie:0.77.1
+    container_name: nessie_fhbd_2026
+    environment:
+      NESSIE_VERSION_STORE_TYPE: JDBC
+      QUARKUS_DATASOURCE_DB_KIND: postgresql
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/nessie
+      QUARKUS_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      JAVA_OPTS_APPEND: "-Xmx512m"
+    ports:
+      - "19120:19120"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 768m
+    restart: unless-stopped
+    networks:
+      - network_fhbd_2026
+
+  # ---------- PIPE ----------
+  spark-jars:
+    build:
+      context: .
+      dockerfile: docker/jars/Dockerfile
+    image: lakehouse-jars:1.0
+    container_name: spark_jars_fhbd_2026
+    command: ["sh", "-c", "cp -f /jars/*.jar /opt/extra-jars/"]
+    volumes:
+      - spark-jars:/opt/extra-jars
+    restart: "no"
+    networks:
+      - network_fhbd_2026
+    profiles: ["pipe"]
+
+  spark-master:
+    <<: *spark-official
+    container_name: spark_master_fhbd_2026
+    hostname: spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "9090:8080"
+      - "7077:7077"
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+    mem_limit: 512m
+
+  spark-worker:
+    <<: *spark-official
+    container_name: spark_worker_fhbd_2026
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      <<: *aws-env
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 1536m
+      SPARK_WORKER_WEBUI_PORT: 8081
+    volumes:
+      - spark-jars:/opt/extra-jars:ro
+    depends_on:
+      spark-master:
+        condition: service_started
+      spark-jars:
+        condition: service_completed_successfully
+    mem_limit: 2g
+
+  # ---------- Airflow y Jupyter (misma imagen: lakehouse:1.0) ----------
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow_init_fhbd_2026
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/config
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/config
+        /entrypoint airflow db migrate
+        /entrypoint airflow users create --username "${AIRFLOW_ADMIN_USER}" --password "${AIRFLOW_ADMIN_PASSWORD}" --firstname Admin --lastname User --role Admin --email admin@example.com || true
+    environment:
+      <<: *airflow-env
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+    user: "0:0"
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow_webserver_fhbd_2026
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    mem_limit: 1g
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow_scheduler_fhbd_2026
+    hostname: airflow-scheduler
+    command: scheduler
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./config:/opt/airflow/config
+      - ./plugins:/opt/airflow/plugins
+      - ./jobs:/opt/airflow/jobs
+      - spark-jars:/opt/extra-jars:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    # Aqui corre el DRIVER de PySpark (client mode); los executors estan en spark-worker
+    mem_limit: 2g
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      spark-master:
+        condition: service_started
+      spark-jars:
+        condition: service_completed_successfully
+
+  jupyter:
+    <<: *lakehouse-image
+    container_name: jupyter_notebook_fhbd_2026
+    hostname: jupyter
+    user: "${AIRFLOW_UID:-50000}:0"
+    entrypoint: ["/home/airflow/jupyter-venv/bin/jupyter"]
+    command: ["lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--ServerApp.root_dir=/workspace"]
+    ports:
+      - "8888:8888"
+    environment:
+      <<: *aws-env
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN}
+    volumes:
+      - ./notebooks:/workspace
+      - ./jobs:/workspace/jobs
+      - spark-jars:/opt/extra-jars:ro
+    depends_on:
+      spark-master:
+        condition: service_started
+      spark-jars:
+        condition: service_completed_successfully
+    mem_limit: 1536m
+    networks:
+      - network_fhbd_2026
+    profiles: ["pipe"]
+
+  # ---------- SQL ----------
+  trino:
+    image: trinodb/trino:440
+    container_name: trino_fhbd_2026
+    ports:
+      - "8081:8080"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./docker/trino/etc:/etc/trino:ro
+    depends_on:
+      - nessie
+      - minio
+    mem_limit: 2g
+    networks:
+      - network_fhbd_2026
+    profiles: ["sql"]
+
+  dremio:
+    platform: linux/x86_64
+    image: dremio/dremio-oss:25.2.0
+    container_name: dremio_fhbd_2026
+    ports:
+      - "9047:9047"
+      - "31010:31010"
+      - "32010:32010"
+    environment:
+      DREMIO_MAX_HEAP_MEMORY_SIZE_MB: 1536
+      DREMIO_MAX_DIRECT_MEMORY_SIZE_MB: 1024
+    volumes:
+      - dremio-data:/opt/dremio/data
+    mem_limit: 3g
+    networks:
+      - network_fhbd_2026
+    profiles: ["sql"]
+
+volumes:
+  postgres-data:
+  minio-data:
+  dremio-data:
+  spark-jars:
+
+networks:
+  network_fhbd_2026:
+    driver: bridge

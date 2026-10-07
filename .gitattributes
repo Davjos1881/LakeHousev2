@@ -1,0 +1,10 @@
+# Fuerza finales de linea LF en archivos que se ejecutan o leen dentro de contenedores Linux.
+# Evita que Git en Windows los convierta a CRLF y rompa los contenedores.
+*.sh               text eol=lf
+*.conf             text eol=lf
+*.properties       text eol=lf
+*.sql              text eol=lf
+*.yml              text eol=lf
+Dockerfile         text eol=lf
+.env               text eol=lf
+jvm.config         text eol=lf

@@ -1,0 +1,16 @@
+# Airflow
+logs/
+
+# Python / Jupyter
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Datos descargados localmente (si algun script los deja en disco)
+data/
+*.parquet
+
+# IDE / sistema
+.vscode/
+.idea/
+.DS_Store
