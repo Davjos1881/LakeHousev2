@@ -86,6 +86,29 @@ Si la fuente se guarda sin error y aparece nessie en el árbol de fuentes, la co
 
 Trino usa la API v1 de Nessie y Dremio la v2. Es correcto, no las iguale.
 
+**Instruciones Para la ingesta manual de  post_2020, post_2021 y users_2021**
+
+Con el perfil core y pipe activo:
+
+    docker compose up -d
+
+    docker compose --profile pipe up -d --no-build
+
+Ejecutar en la consola y en el mismo orden:
+
+**IMPORTANTE: cada proceso de esta ingesta manual puede durar varios minutos, en mi caso fueron casi 8 o 10 minutos**
+
+    docker exec jupyter_notebook_fhbd_2026 /home/airflow/dlt-venv/bin/python /workspace/jobs/bronze_seed.py post 2020_H1
+    
+    docker exec jupyter_notebook_fhbd_2026 /home/airflow/dlt-venv/bin/python /workspace/jobs/bronze_seed.py posts 2021_H1
+
+    docker exec jupyter_notebook_fhbd_2026 /home/airflow/dlt-venv/bin/python /workspace/jobs/bronze_seed.py users 2020_H1
+
+
+verificar que en minio el bucket tenga los archivos y carpetas correctas, o tambien puedes ver lo subido con el comando:
+
+    docker exec jupyter_notebook_fhbd_2026 /home/airflow/dlt-venv/bin/python /workspace/jobs/bronze_ls.py
+
 Para Apagar el contenedor:
 
     docker compose --profile pipe --profile sql down
