@@ -264,7 +264,7 @@ services:
         condition: service_started
       spark-jars:
         condition: service_completed_successfully
-    mem_limit: 1536m
+    mem_limit: 4g
     networks:
       - network_fhbd_2026
     profiles: ["pipe"]
