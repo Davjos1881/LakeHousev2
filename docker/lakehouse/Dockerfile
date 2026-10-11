@@ -19,8 +19,7 @@ ENV PATH="${SPARK_HOME}/bin:${PATH}"
 
 USER airflow
 COPY --chown=airflow:root docker/lakehouse/requirements-lakehouse.txt \
-                          docker/lakehouse/requirements-jupyter.txt \
-                          docker/common/requirements-dlt.txt /tmp/req/
+                          docker/lakehouse/requirements-jupyter.txt /tmp/req/
 
 # 1) PySpark 3.5.5 (una sola descarga), con Airflow fijado
 RUN pip install --no-cache-dir "apache-airflow==${AIRFLOW_VERSION}" -r /tmp/req/requirements-lakehouse.txt
@@ -34,6 +33,8 @@ RUN python -m venv --system-site-packages /home/airflow/jupyter-venv && \
     /home/airflow/jupyter-venv/bin/python -c "import pyspark, jupyterlab; print('jupyter-venv ok')"
 
 # 3) DLT aislado en su propio venv
+# 3) DLT aislado en su propio venv
+COPY --chown=airflow:root docker/common/requirements-dlt.txt /tmp/req/requirements-dlt.txt
 RUN python -m venv /home/airflow/dlt-venv && \
     /home/airflow/dlt-venv/bin/pip install --no-cache-dir -r /tmp/req/requirements-dlt.txt
 
