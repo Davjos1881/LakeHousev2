@@ -32,6 +32,7 @@ x-airflow-common: &airflow-common
   environment: &airflow-env
     <<: *aws-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark%3A%2F%2Fspark-master:7077"
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/airflow
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
@@ -41,6 +42,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
   volumes:
     - ./dags:/opt/airflow/dags
+    - ./notebooks:/opt/airflow/notebooks
     - ./logs:/opt/airflow/logs
     - ./config:/opt/airflow/config
     - ./plugins:/opt/airflow/plugins
@@ -221,6 +223,7 @@ services:
     command: scheduler
     volumes:
       - ./dags:/opt/airflow/dags
+      - ./notebooks:/opt/airflow/notebooks
       - ./logs:/opt/airflow/logs
       - ./config:/opt/airflow/config
       - ./plugins:/opt/airflow/plugins
