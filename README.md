@@ -58,7 +58,7 @@ Deben aparecer 5 archivos .jar.
 
 5. Trino y Dremio
 
-Apaga pipe si desea liberar memoria (no borra datos) y levanta sql:
+Apaga pipe si deseas liberar memoria (no borra datos) y levanta sql:
 
     docker compose --profile pipe stop
     
@@ -66,7 +66,7 @@ Apaga pipe si desea liberar memoria (no borra datos) y levanta sql:
     
     docker pull dremio/dremio-oss:25.2.0
     
-    docker compose --profile sql up -d
+    docker compose --profile sql up -d --no-build
 
 Trino. Cuando docker compose logs trino --tail 3 muestre SERVER STARTED:
 
@@ -74,17 +74,35 @@ Trino. Cuando docker compose logs trino --tail 3 muestre SERVER STARTED:
 
 Sin tablas cargadas, debe salir solo information_schema. Que responda sin error confirma que Trino llega a Nessie. No confirma la lectura de datos en MinIO, porque eso solo se puede probar cuando existan tablas reales.
 
-Dremio (http://localhost:9047): la primera vez pide crear un usuario administrador. Después, Add Source → Nessie:
+Luego, entra a http://localhost:8081, deberias ver la interfaz de Trino
+
+<img width="1917" height="937" alt="image" src="https://github.com/user-attachments/assets/fc0683e1-44a7-4b6a-b8ea-229626495dd2" />
+
+Una vez insertes un usuario (el que sea), veras el Ui:
+
+<img width="1917" height="937" alt="image" src="https://github.com/user-attachments/assets/fda16478-cb80-4678-b03b-94dc732d8e25" />
+
+
+
+Para Dremio (http://localhost:9047): la primera vez pide crear un usuario administrador. 
+
+Después, Add Source --> Nessie:
 
 Endpoint URL: http://nessie:19120/api/v2, sin autenticación.
 
 Storage: AWS Access Key admin / password, Root path warehouse, y desmarcar Encrypt connection.
 
-Connection Properties: fs.s3a.path.style.access = true, fs.s3a.endpoint = minio:9000, dremio.s3.compat = true.
+Connection Properties: 
+
+fs.s3a.path.style.access = true
+
+fs.s3a.endpoint = minio:9000 
+
+dremio.s3.compat = true.
 
 Si la fuente se guarda sin error y aparece nessie en el árbol de fuentes, la conexión funciona. De nuevo, la lectura de datos se comprobará con las tablas reales.
 
-Trino usa la API v1 de Nessie y Dremio la v2. Es correcto, no las iguale.
+Trino usa la API v1 de Nessie y Dremio la v2. Es correcto, no las iguales.
 
 **Instruciones Para la ingesta manual de  post_2020, post_2021 y users_2021**
 
@@ -104,10 +122,74 @@ Ejecutar en la consola y en el mismo orden:
 
     docker exec jupyter_notebook_fhbd_2026 /home/airflow/dlt-venv/bin/python /workspace/jobs/bronze_seed.py users 2020_H1
 
+En caso de la carga de Users del 2021, puedes hacerlo directamente desde Jupyter en http://localhost:8888  corriendo el notebook **bronze_ingest.ipynb** o mediante el Dag en Airflow
 
 verificar que en minio el bucket tenga los archivos y carpetas correctas, o tambien puedes ver lo subido con el comando:
 
     docker exec jupyter_notebook_fhbd_2026 /home/airflow/dlt-venv/bin/python /workspace/jobs/bronze_ls.py
+
+**Ingesta con Script de Posts a Silver**
+
+    docker exec jupyter_notebook_fhbd_2026 python /workspace/jobs/silver_posts.py
+
+Puedes verificarlo directamente en el Minio o poniendo esto en la consola
+
+    docker exec jupyter_notebook_fhbd_2026 python -c "from pyspark.sql import SparkSession; s=SparkSession.builder.getOrCreate(); s.sql('SELECT check_name, failed_rows, total_rows, action FROM nessie.silver.dq_log').show(truncate=False); s.sql('SELECT count(*) n, count(distinct post_id) ids FROM nessie.silver.posts_hist').show(); s.stop()"
+
+Ejecutalo dos o más veces, las filas de posts_hist deben ser las mismas, y esa es la prueba de que el MERGE es idempotente
+
+En caso de la carga de Users a Silver, puedes hacerlo directamente desde Jupyter en http://localhost:8888  corriendo el notebook **silver_transform.ipynb** o mediante el Dag en Airflow
+
+Para la capa Gold es mas de lo mismo, directamente desde Jupyter en corriendo el notebook **gold_agg.ipynb** o mediante el Dag en Airflow
+
+Una vez el Dag finalice (en mi caso han sido alrededor de 5 minutos por run) para ver la salida de Gold, selecciona la tarea **gold_posts_counts_by_user** y en la seccion de logs deberias ver:
+
+<img width="800" height="257" alt="image" src="https://github.com/user-attachments/assets/575992d0-fa85-4fad-8cbb-9af888d0e354" />
+
+<img width="812" height="512" alt="image" src="https://github.com/user-attachments/assets/98c8b47e-0918-4ebb-bb47-69c8584de402" />
+
+<img width="952" height="428" alt="image" src="https://github.com/user-attachments/assets/76a17379-50d1-4b24-9ab4-8f0c882454c4" />
+
+En este punto, podemos apagar el perfil pipe del contenedor si lo deseamos. Aunque no es estrictamente necesario
+
+    docker compose --profile pipe down
+
+Ahora, a través de consultas a Silver en Dremio y Trino debemos replicar la misma informacion de Gold
+
+Para ello, encendemos el perfil sql del contenedor
+
+    docker compose --profile sql up -d --no-build
+
+En Dremio (http://localhost:9047/), simplemente abre el SQL Editor y pega la consulta del archivo **dremio_gold.sql** ubicado en la carpeta sql del proyecto
+
+En trino es algo diferente, ya que aqui usaremos **Dbeaver** y luego de eso crearemos una conexion a Trino para hacer la consulta
+
+Una vez insertemos un usuario en Trino y estemos observando la Ui, nos dirigimos a Dbeaver y creamos una nueva conexion
+
+<img width="1917" height="1078" alt="image" src="https://github.com/user-attachments/assets/2c38b82f-a913-4b3c-af26-395215547ff6" />
+
+El usuario puede ser cualquiera, lo mismo con la contraseña. Lo importante es que el puerto sea el 8081
+
+Dale a Probar conexion y si no hay errores, dale a finalizar
+
+Con la conexion creada y activa (dale doble clic sobre ella, debe aparecer el chulo)
+
+<img width="482" height="637" alt="image" src="https://github.com/user-attachments/assets/362e45d1-cda9-402c-bf31-c1c4ccb0bba3" />
+
+Crea un nuevo script sql y pega el script 2 del archivo **trino_silver_y_replica_gold.sql** de la carpeta sql del proyecto
+
+Una vez ejecutes el comando y mientras se completa el proceso, puede ver en el Ui de Trino y en Dbeaver el proceso
+
+Ya terminada la consulta, puedes ver la salida en la consola de Dbeaver. La consulta tira varias columnas, pero las importantes son:
+
+total_posts (por usuario)
+
+<img width="165" height="333" alt="image" src="https://github.com/user-attachments/assets/f859b3a4-8f87-4342-a453-234f89a865eb" />
+
+activity_tier y activity_trend (por usuario)
+
+<img width="362" height="340" alt="image" src="https://github.com/user-attachments/assets/d1d3fa28-9c3e-4da2-816b-65d2c7cc06eb" />
+
 
 Para Apagar el contenedor:
 
