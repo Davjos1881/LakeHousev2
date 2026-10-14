@@ -1,5 +1,4 @@
 -- TRINO: tablas Silver y replica de Gold desde Silver
--- Ejecutar con:  Get-Content -Raw sql\trino_silver_y_replica_gold.sql | docker exec -i trino_fhbd_2026 trino
 
 -- 1) Tablas Silver disponibles en Trino
 SHOW TABLES FROM iceberg.silver;

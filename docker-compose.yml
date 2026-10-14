@@ -300,11 +300,11 @@ services:
       - "31010:31010"
       - "32010:32010"
     environment:
-      DREMIO_MAX_HEAP_MEMORY_SIZE_MB: 1536
-      DREMIO_MAX_DIRECT_MEMORY_SIZE_MB: 1024
+      DREMIO_MAX_HEAP_MEMORY_SIZE_MB: 2048
+      DREMIO_MAX_DIRECT_MEMORY_SIZE_MB: 2560
     volumes:
       - dremio-data:/opt/dremio/data
-    mem_limit: 3g
+    mem_limit: 5g
     networks:
       - network_fhbd_2026
     profiles: ["sql"]
